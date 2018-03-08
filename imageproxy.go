@@ -73,16 +73,12 @@ type Proxy struct {
 	Verbose bool
 }
 
-var (
-	reRouteMapping *routemapping.RouteMapping
-	flagExclusive  = flag.Bool("exclusive", false, "Exclusive")
-	flagMappingURL = flag.String("mapping-url", "", "Mapping JSON URL")
-)
+var reRouteMapping *routemapping.RouteMapping
 
 // NewProxy constructs a new proxy.  The provided http RoundTripper will be
 // used to fetch remote URLs.  If nil is provided, http.DefaultTransport will
 // be used.
-func NewProxy(transport http.RoundTripper, cache Cache) *Proxy {
+func NewProxy(transport http.RoundTripper, cache Cache, exclusive bool, mappingURL string) *Proxy {
 	if transport == nil {
 		transport = http.DefaultTransport
 	}
@@ -111,13 +107,17 @@ func NewProxy(transport http.RoundTripper, cache Cache) *Proxy {
 
 	flag.Parse()
 
-	reRouteMapping = routemapping.New(*flagExclusive)
+	if exclusive && "" == strings.Trim(mappingURL, " ") {
+		log.Fatalln(fmt.Errorf("Must set flag `mappingurl` when using flag `exclusive`"))
+	}
+
+	reRouteMapping = routemapping.New(exclusive)
 
 	log.Println("Fetching latest Image Proxy Mapping JSON file. Please wait..")
-	fetchRouteMappingChanges(*flagMappingURL)
+	mustFetchRouteMappingChanges(mappingURL)
 
 	var watcherContext context.Context
-	go watchRouteMappingChanges(watcherContext, *flagMappingURL)
+	go watchRouteMappingChanges(watcherContext, mappingURL)
 
 	proxy.Client = client
 
@@ -142,7 +142,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.ServeHTTP(w, r)
 }
 
-func fetchRouteMappingChanges(watchPath string) {
+func fetchRouteMappingChanges(watchPath string) (err error) {
 	resp, err := http.Get(watchPath)
 	if nil != err {
 		log.Fatalln(err)
@@ -154,17 +154,26 @@ func fetchRouteMappingChanges(watchPath string) {
 		return
 	}
 	var data map[string]string
-	if err := json.Unmarshal(bodyBytes, &data); nil != err {
+	err = json.Unmarshal(bodyBytes, &data)
+	if nil != err {
 		log.Fatalln(err)
 		return
 	}
 	reRouteMapping.Set(data)
+	return err
+}
+
+func mustFetchRouteMappingChanges(watchPath string) {
+	if err := fetchRouteMappingChanges(watchPath); nil != err {
+		log.Println("Fetching the intial JSON Mapping failed..")
+		log.Fatalln(err)
+	}
 }
 
 func watchRouteMappingChanges(ctx context.Context, watchPath string) {
 	for {
-		fetchRouteMappingChanges(watchPath)
 		time.Sleep(time.Minute)
+		fetchRouteMappingChanges(watchPath)
 	}
 }
 
@@ -174,6 +183,7 @@ func (p *Proxy) serveImage(w http.ResponseWriter, r *http.Request) {
 	for search, replace := range reRouteMapping.Get() {
 		if strings.Index(r.RequestURI, "/"+search) == 0 {
 			r.RequestURI = strings.Replace(r.RequestURI, "/"+search, replace, 1)
+			r.URL.Path = strings.Replace(r.RequestURI, "/"+search, replace, 1)
 			found = true
 			break
 		}

@@ -51,6 +51,8 @@ var scaleUp = flag.Bool("scaleUp", false, "allow images to scale beyond their or
 var timeout = flag.Duration("timeout", 0, "time limit for requests served by this proxy")
 var verbose = flag.Bool("verbose", false, "print verbose logging messages")
 var version = flag.Bool("version", false, "Deprecated: this flag does nothing")
+var exclusive = flag.Bool("exclusive", false, "Exclusive")
+var mappingURL = flag.String("mappingurl", "", "Mapping JSON URL")
 
 func init() {
 	flag.Var(&cache, "cache", "location to cache images (see https://github.com/willnorris/imageproxy#cache)")
@@ -59,7 +61,7 @@ func init() {
 func main() {
 	flag.Parse()
 
-	p := imageproxy.NewProxy(nil, cache.Cache)
+	p := imageproxy.NewProxy(nil, cache.Cache, *exclusive, *mappingURL)
 	if *whitelist != "" {
 		p.Whitelist = strings.Split(*whitelist, ",")
 	}
