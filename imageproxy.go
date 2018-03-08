@@ -182,8 +182,8 @@ func (p *Proxy) serveImage(w http.ResponseWriter, r *http.Request) {
 	var found bool
 	for search, replace := range reRouteMapping.Get() {
 		if strings.Index(r.RequestURI, "/"+search) == 0 {
-			r.RequestURI = strings.Replace(r.RequestURI, "/"+search, replace, 1)
-			r.URL.Path = strings.Replace(r.RequestURI, "/"+search, replace, 1)
+			r.RequestURI = "/" + strings.Replace(r.RequestURI, "/"+search, replace, 1)
+			r.URL.Path = "/" + strings.Replace(r.URL.Path, "/"+search, replace, 1)
 			found = true
 			break
 		}
