@@ -19,9 +19,12 @@ package imageproxy // import "willnorris.com/go/imageproxy"
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -32,6 +35,7 @@ import (
 	"time"
 
 	"github.com/gregjones/httpcache"
+	"willnorris.com/go/imageproxy/routemapping"
 	tphttp "willnorris.com/go/imageproxy/third_party/http"
 )
 
@@ -69,6 +73,12 @@ type Proxy struct {
 	Verbose bool
 }
 
+var (
+	reRouteMapping *routemapping.RouteMapping
+	flagExclusive  = flag.Bool("exclusive", false, "Exclusive")
+	flagMappingURL = flag.String("mapping-url", "", "Mapping JSON URL")
+)
+
 // NewProxy constructs a new proxy.  The provided http RoundTripper will be
 // used to fetch remote URLs.  If nil is provided, http.DefaultTransport will
 // be used.
@@ -99,6 +109,16 @@ func NewProxy(transport http.RoundTripper, cache Cache) *Proxy {
 		MarkCachedResponses: true,
 	}
 
+	flag.Parse()
+
+	reRouteMapping = routemapping.New(*flagExclusive)
+
+	log.Println("Fetching latest Image Proxy Mapping JSON file. Please wait..")
+	fetchRouteMappingChanges(*flagMappingURL)
+
+	var watcherContext context.Context
+	go watchRouteMappingChanges(watcherContext, *flagMappingURL)
+
 	proxy.Client = client
 
 	return proxy
@@ -122,8 +142,50 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.ServeHTTP(w, r)
 }
 
+func fetchRouteMappingChanges(watchPath string) {
+	resp, err := http.Get(watchPath)
+	if nil != err {
+		log.Fatalln(err)
+		return
+	}
+	bodyBytes, err := ioutil.ReadAll(resp.Body)
+	if nil != err {
+		log.Fatalln(err)
+		return
+	}
+	var data map[string]string
+	if err := json.Unmarshal(bodyBytes, &data); nil != err {
+		log.Fatalln(err)
+		return
+	}
+	reRouteMapping.Set(data)
+}
+
+func watchRouteMappingChanges(ctx context.Context, watchPath string) {
+	for {
+		fetchRouteMappingChanges(watchPath)
+		time.Sleep(time.Minute)
+	}
+}
+
 // serveImage handles incoming requests for proxied images.
 func (p *Proxy) serveImage(w http.ResponseWriter, r *http.Request) {
+	var found bool
+	for search, replace := range reRouteMapping.Get() {
+		if strings.Index(r.RequestURI, "/"+search) == 0 {
+			r.RequestURI = strings.Replace(r.RequestURI, "/"+search, replace, 1)
+			found = true
+			break
+		}
+	}
+
+	if reRouteMapping.IsExclusive() && !found {
+		msg := fmt.Sprintf("invalid request URL: %v", r.RequestURI)
+		log.Print(fmt.Errorf(msg))
+		http.Error(w, msg, http.StatusNotFound)
+		return
+	}
+
 	req, err := NewRequest(r, p.DefaultBaseURL)
 	if err != nil {
 		msg := fmt.Sprintf("invalid request URL: %v", err)
