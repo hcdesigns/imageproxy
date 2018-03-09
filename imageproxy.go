@@ -177,20 +177,22 @@ func watchRouteMappingChanges(ctx context.Context, watchPath string) {
 	}
 }
 
+const invalidRequestText = "invalid request URL: %v"
+
 // serveImage handles incoming requests for proxied images.
 func (p *Proxy) serveImage(w http.ResponseWriter, r *http.Request) {
 	var found bool
 	for search, replace := range reRouteMapping.Get() {
 		if strings.Index(r.RequestURI, "/"+search) == 0 {
-			r.RequestURI = "/" + strings.Replace(r.RequestURI, "/"+search, replace, 1)
-			r.URL.Path = "/" + strings.Replace(r.URL.Path, "/"+search, replace, 1)
+			r.RequestURI = strings.Replace(r.RequestURI, "/"+search+"/", "/"+replace+"/", 1)
+			r.URL.Path = strings.Replace(r.URL.Path, "/"+search+"/", "/"+replace+"/", 1)
 			found = true
 			break
 		}
 	}
 
 	if reRouteMapping.IsExclusive() && !found {
-		msg := fmt.Sprintf("invalid request URL: %v", r.RequestURI)
+		msg := fmt.Sprintf(invalidRequestText, r.RequestURI)
 		log.Print(fmt.Errorf(msg))
 		http.Error(w, msg, http.StatusNotFound)
 		return
@@ -198,7 +200,7 @@ func (p *Proxy) serveImage(w http.ResponseWriter, r *http.Request) {
 
 	req, err := NewRequest(r, p.DefaultBaseURL)
 	if err != nil {
-		msg := fmt.Sprintf("invalid request URL: %v", err)
+		msg := fmt.Sprintf(invalidRequestText, err)
 		log.Print(msg)
 		http.Error(w, msg, http.StatusBadRequest)
 		return
